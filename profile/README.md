@@ -36,40 +36,19 @@ Please send requests for new cloud connectors to us here at connector-request@al
 
 This guide will walk you through installing the CLI, authenticating, and deploying your first automation example using a HubSpot connector. 
 
-Alternatively, use the Web UI and IDE directly by [signing up for an account](https://home.aloma.io) online.
+[Signing up for an account](https://home.aloma.io).
 
----
+Ensure **Node.js Installed**
 
-## Prerequisites
 
-Before getting started, ensure the following:
-
-### 1. **Node.js Installed**
-
-Aloma requires Node.js (which includes npm). To check if it’s already installed, run:
-
-```bash
-node -v
-# or
-npm -v
-```
-
-If not, [download and install Node.js](https://nodejs.org/en/download/).
-
----
-
-### Step 1: Get the CLI Package
-
-[URL]
-
-### Step 2: Install the CLI Globally
+### Step 1: Install the CLI
 
 
 ```bash
 npm install -g aloma-1.0.0.tgz
 ```
 
-### Step 3: Setup
+### Step 2: Setup
 
 ```bash
 aloma setup
@@ -77,7 +56,7 @@ aloma setup
 
 This command configures your CLI environment.
 
-### Step 4: Authenticate
+### Step 3: Authenticate
 
 ```bash
 aloma auth
@@ -87,13 +66,13 @@ This will guide you through authentication via your Aloma account.
 
 We’ll now deploy a HubSpot integration workflow as an example.
 
-### Step 5: Get the Example Folder
+### Step 4: Get the Example Folder
 
-Download or clone the example folder containing the [**HubSpot connector**](https://github.com/aloma-io/aloma-io/tree/main/examples/hubspot).
+Download or clone the example folder containing the [**HubSpot example**](https://github.com/aloma-io/aloma-io/tree/main/examples/hubspot).
 
-Unzip the folder if needed.
+Note, there are other example workflows you can choose from here [**examples**](https://github.com/aloma-io/aloma-io/tree/main/examples) along with documentation. You can install a different workflow if you prefer using the same commands.
 
-### Step 6: Update API Token
+### Step 5: Update API Token
 
 Inside the project folder, open:
 
@@ -106,7 +85,7 @@ Replace the placeholder with your actual HubSpot token:
 ```json
 "apiToken": "your-real-token-here"
 ```
-### Step 7: Deploy the Workflow
+### Step 6: Deploy the Workflow
 
 Inside the folder, run:
 
