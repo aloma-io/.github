@@ -27,73 +27,14 @@ The general user documentation for ALOMA, is located under the docs directory [d
 
 There is a growing [library of workflows with steps](https://github.com/aloma-io/aloma-io/tree/main/examples) that can be deployed to your ALOMA workspace via the CLI as per instructions. Please feel free to share your steps here for the community.
 
-There is a [connector repo](https://github.com/aloma-io/connectors) with an SDK to build an on prem connector for your local environment and several example connectors,
+There is a [connector repo](https://github.com/aloma-io/connectors) with an SDK to build an on prem connector for your local environment and several example connectors.
 
 Please send requests for new cloud connectors to us here at connector-request@aloma.io.
 
 
-## Getting Started with CLI
+## Getting Started
 
-This guide will walk you through installing the CLI, authenticating, and deploying your first automation example using a HubSpot connector. 
-
-[Signing up for an account](https://home.aloma.io).
-
-Ensure **Node.js Installed**
-
-
-### Step 1: Install the CLI
-
-
-```bash
-npm install -g aloma-1.0.0.tgz
-```
-
-### Step 2: Setup
-
-```bash
-aloma setup
-```
-
-This command configures your CLI environment.
-
-### Step 3: Authenticate
-
-```bash
-aloma auth
-```
-
-This will guide you through authentication via your Aloma account.
-
-We’ll now deploy a HubSpot integration workflow as an example.
-
-### Step 4: Get the Example Folder
-
-Download or clone the example folder containing the [**HubSpot example**](https://github.com/aloma-io/aloma-io/tree/main/examples/hubspot).
-
-Note, there are other example workflows you can choose from here [**examples**](https://github.com/aloma-io/aloma-io/tree/main/examples) along with documentation. You can install a different workflow if you prefer using the same commands.
-
-### Step 5: Update API Token
-
-Inside the project folder, open:
-
-```text
-connector/connector-hubspot.json
-```
-
-Replace the placeholder with your actual HubSpot token:
-
-```json
-"apiToken": "your-real-token-here"
-```
-### Step 6: Deploy the Workflow
-
-Inside the folder, run:
-
-```bash
-aloma deploy deploy.yaml
-```
-
-This will deploy your automation to the Aloma platform.
+You can access ALOMA either using a CLI, see the [CLI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/CLI), or the Web UI, see the [Web UI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/web-UI).
 
 ---
 
