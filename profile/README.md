@@ -34,7 +34,12 @@ Please send requests for new cloud connectors to us here at connector-request@al
 
 ## Getting Started
 
-You can access ALOMA either using a CLI, see the [CLI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/CLI), or the Web UI, see the [Web UI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/web-UI).
+Check out the [toy example](https://github.com/aloma-io/aloma-io/blob/main/docs/getting-started/toy-example.md) to understand the basics of how ALOMA works. 
+
+You can access ALOMA either using CLI  or Web UI .
+
+- [CLI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/CLI)
+- [Web UI Documentation](https://github.com/aloma-io/aloma-io/blob/main/docs/web-UI)
 
 ---
 
