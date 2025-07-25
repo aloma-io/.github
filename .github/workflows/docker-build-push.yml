@@ -86,7 +86,6 @@ jobs:
 
   # Push to Azure Container Registry
   push-azure:
-    if: ${{ inputs.enable-azure && secrets.AZURE_USER && secrets.AZURE_PASS }}
     needs: docker-build
     runs-on: ubuntu-latest
     permissions:
@@ -107,7 +106,6 @@ jobs:
 
   # Push to Google Artifact Registry (parallel with Azure)
   push-google:
-    if: ${{ inputs.enable-google && secrets.GOOGLE_CLOUD_KEY }}
     needs: docker-build
     runs-on: ubuntu-latest
     permissions:
