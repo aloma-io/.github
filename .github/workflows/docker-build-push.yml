@@ -50,6 +50,10 @@ jobs:
   # Build Docker image with caching
   docker-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: read
     outputs:
       primary-tag: ${{ steps.build.outputs.primary-tag }}
       all-tags: ${{ steps.build.outputs.all-tags }}
@@ -57,6 +61,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT || github.token }}
           
       - name: Build Docker image
         id: build
@@ -66,6 +73,10 @@ jobs:
           tags: ${{ inputs.tags }}
           context: ${{ inputs.context }}
           dockerfile: ${{ inputs.dockerfile }}
+          # Enable GitHub Actions caching
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          github-token: ${{ github.token }}
 
   # Push to Azure Container Registry
   push-azure:
