@@ -81,7 +81,7 @@ jobs:
           # Enable GitHub Actions caching
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          cache-scope: ${{ inputs.cache-scope || github.repository }}
+          cache-scope: ${{ inputs.cache-scope }}
           github-token: ${{ github.token }}
 
   # Push to Azure Container Registry
