@@ -105,12 +105,49 @@ runs:
         GITHUB_REF_NAME: ${{ github.ref_name }}
         GITHUB_REF_TYPE: ${{ github.ref_type }}
 
+    - name: Auto-detect Dockerfile
+      id: detect-dockerfile
+      shell: bash
+      run: |
+        # Auto-detect the correct dockerfile to use
+        DOCKERFILE_PATH="${{ inputs.dockerfile }}"
+        CONTEXT_PATH="${{ inputs.context }}"
+        
+        # Check if the specified dockerfile exists
+        if [[ -f "${CONTEXT_PATH}/${DOCKERFILE_PATH}" ]]; then
+          echo "✅ Found specified dockerfile: ${DOCKERFILE_PATH}"
+          FINAL_DOCKERFILE="${DOCKERFILE_PATH}"
+        else
+          echo "⚠️  Specified dockerfile '${DOCKERFILE_PATH}' not found, trying alternatives..."
+          
+          # Try common alternatives
+          CANDIDATES=("Dockerfile" "Containerfile" "dockerfile" "containerfile")
+          FINAL_DOCKERFILE=""
+          
+          for candidate in "${CANDIDATES[@]}"; do
+            if [[ -f "${CONTEXT_PATH}/${candidate}" ]]; then
+              echo "✅ Found alternative dockerfile: ${candidate}"
+              FINAL_DOCKERFILE="${candidate}"
+              break
+            fi
+          done
+          
+          if [[ -z "${FINAL_DOCKERFILE}" ]]; then
+            echo "❌ No dockerfile found! Checked:"
+            printf "   - %s\n" "${CANDIDATES[@]}"
+            exit 1
+          fi
+        fi
+        
+        echo "📋 Using dockerfile: ${FINAL_DOCKERFILE}"
+        echo "dockerfile=${FINAL_DOCKERFILE}" >> $GITHUB_OUTPUT
+
     - name: Build Docker image with caching
       uses: docker/build-push-action@v6
       id: build
       with:
         context: ${{ inputs.context }}
-        file: ${{ inputs.dockerfile }}
+        file: ${{ steps.detect-dockerfile.outputs.dockerfile }}
         platforms: ${{ inputs.platforms }}
         tags: ${{ inputs.image_name }}:${{ steps.parse-tags.outputs.primary-tag }}
         push: false

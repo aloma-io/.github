@@ -8,10 +8,10 @@ on:
         required: true
         type: string
       dockerfile:
-        description: 'Path to Dockerfile'
+        description: 'Path to Dockerfile or Containerfile'
         required: false
         type: string
-        default: 'Dockerfile'
+        default: 'Containerfile'
       context:
         description: 'Build context path'
         required: false
