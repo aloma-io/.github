@@ -1,0 +1,23 @@
+name: Minimal Docker Test
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+          
+      - name: Test build action
+        uses: aloma-io/.github/actions/build@main
+        with:
+          image_name: ${{ inputs.image_name }}
+          tags: 'test'
+          context: '.'
+          dockerfile: 'Containerfile'
