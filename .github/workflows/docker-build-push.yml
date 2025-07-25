@@ -1,0 +1,126 @@
+name: Reusable Docker Build and Push
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: 'Name of the Docker image (without registry prefix)'
+        required: true
+        type: string
+      dockerfile:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      context:
+        description: 'Build context path'
+        required: false
+        type: string
+        default: '.'
+      tags:
+        description: 'Tags to apply to the image (comma or space separated)'
+        required: false
+        type: string
+        default: 'latest'
+      cache-scope:
+        description: 'Cache scope for Docker buildx (defaults to repository name)'
+        required: false
+        type: string
+        default: ''
+      enable-azure:
+        description: 'Enable push to Azure Container Registry'
+        required: false
+        type: boolean
+        default: true
+      enable-google:
+        description: 'Enable push to Google Artifact Registry'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      AZURE_USER:
+        description: 'Azure Container Registry username'
+        required: false
+      AZURE_PASS:
+        description: 'Azure Container Registry password'
+        required: false
+      GOOGLE_CLOUD_KEY:
+        description: 'Google Cloud service account key (base64 encoded)'
+        required: false
+      PAT:
+        description: 'Personal Access Token for private repositories'
+        required: false
+
+jobs:
+  # Build Docker image with caching
+  docker-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    outputs:
+      primary-tag: ${{ steps.build.outputs.primary-tag }}
+      all-tags: ${{ steps.build.outputs.all-tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT || github.token }}
+          
+      - name: Build Docker image
+        id: build
+        uses: aloma-io/.github/actions/build@main
+        with:
+          image_name: ${{ inputs.image_name }}
+          tags: ${{ inputs.tags }}
+          context: ${{ inputs.context }}
+          dockerfile: ${{ inputs.dockerfile }}
+          # Enable GitHub Actions caching
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          cache-scope: ${{ inputs.cache-scope || github.repository }}
+          github-token: ${{ github.token }}
+
+  # Push to Azure Container Registry
+  push-azure:
+    if: ${{ inputs.enable-azure && secrets.AZURE_USER && secrets.AZURE_PASS }}
+    needs: docker-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Push to Azure Container Registry
+        uses: aloma-io/.github/actions/push-azure@main
+        with:
+          image_name: ${{ inputs.image_name }}
+          source_tag: ${{ needs.docker-build.outputs.primary-tag }}
+          all_tags: ${{ needs.docker-build.outputs.all-tags }}
+        env:
+          AZURE_USER: ${{ secrets.AZURE_USER }}
+          AZURE_PASS: ${{ secrets.AZURE_PASS }}
+
+  # Push to Google Artifact Registry (parallel with Azure)
+  push-google:
+    if: ${{ inputs.enable-google && secrets.GOOGLE_CLOUD_KEY }}
+    needs: docker-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Push to Google Artifact Registry
+        uses: aloma-io/.github/actions/push-google@main
+        with:
+          image_name: ${{ inputs.image_name }}
+          source_tag: ${{ needs.docker-build.outputs.primary-tag }}
+          all_tags: ${{ needs.docker-build.outputs.all-tags }}
+        env:
+          GOOGLE_CLOUD_KEY: ${{ secrets.GOOGLE_CLOUD_KEY }}

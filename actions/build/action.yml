@@ -1,0 +1,169 @@
+name: 'Docker Build'
+description: 'Build Docker image with automatic tag generation'
+author: 'Aloma'
+
+inputs:
+  image_name:
+    description: 'Name of the Docker image (without registry prefix)'
+    required: true
+  tags:
+    description: 'Comma-separated list of tags to apply to the image'
+    required: true
+  context:
+    description: 'Build context path'
+    required: false
+    default: '.'
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Containerfile'
+  platforms:
+    description: 'Target platforms for build'
+    required: false
+    default: 'linux/amd64'
+  cache-from:
+    description: 'Cache import source (e.g., type=gha)'
+    required: false
+    default: ''
+  cache-to:
+    description: 'Cache export destination (e.g., type=gha,mode=max)'
+    required: false
+    default: ''
+  github-token:
+    description: 'GitHub token for cache operations'
+    required: false
+    default: ''
+  cache-scope:
+    description: 'Cache scope for GitHub Actions cache'
+    required: false
+    default: 'buildkit'
+
+outputs:
+  primary-tag:
+    description: 'Primary tag derived from input'
+    value: ${{ steps.parse-tags.outputs.primary-tag }}
+  all-tags:
+    description: 'All tags including derived ones'
+    value: ${{ steps.parse-tags.outputs.all-tags }}
+  image-digest:
+    description: 'Image digest from build'
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        platforms: ${{ inputs.platforms }}
+
+    - name: Parse tags and derive additional tags
+      id: parse-tags
+      shell: bash
+      run: |
+        # Convert comma-separated tags to array
+        IFS=',' read -ra TAGS_ARRAY <<< "${{ inputs.tags }}"
+        PRIMARY_TAG="${TAGS_ARRAY[0]}"
+        
+        # Start with user-provided tags
+        ALL_TAGS_LIST=("${TAGS_ARRAY[@]}")
+        
+        # Derive additional tags for backward compatibility
+        # Add SHA-based tag (first 8 characters)
+        if [[ -n "$GITHUB_SHA" ]]; then
+          SHA_TAG="${GITHUB_SHA:0:8}"
+          # Only add if not already present
+          if [[ ! " ${TAGS_ARRAY[*]} " =~ " ${SHA_TAG} " ]]; then
+            ALL_TAGS_LIST+=("${SHA_TAG}")
+          fi
+        fi
+        
+        # Add branch-based tag if available
+        if [[ -n "$GITHUB_REF_NAME" && "$GITHUB_REF_TYPE" == "branch" ]]; then
+          # Clean branch name (replace / with -)
+          BRANCH_TAG="${GITHUB_REF_NAME//\//-}"
+          # Only add if not already present and not a SHA
+          if [[ ! " ${TAGS_ARRAY[*]} " =~ " ${BRANCH_TAG} " && "${BRANCH_TAG}" != "${SHA_TAG:-}" ]]; then
+            ALL_TAGS_LIST+=("${BRANCH_TAG}")
+          fi
+        fi
+        
+        # Convert array back to newline-separated string
+        ALL_TAGS=$(printf "%s\n" "${ALL_TAGS_LIST[@]}")
+        
+        echo "primary-tag=${PRIMARY_TAG}" >> $GITHUB_OUTPUT
+        echo "all-tags<<EOF" >> $GITHUB_OUTPUT
+        echo "${ALL_TAGS}" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        # Debug output
+        echo "📋 Primary tag: ${PRIMARY_TAG}"
+        echo "📋 All tags to be applied:"
+        printf "   - %s\n" "${ALL_TAGS_LIST[@]}"
+      env:
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        GITHUB_REF_TYPE: ${{ github.ref_type }}
+
+    - name: Build Docker image with caching
+      uses: docker/build-push-action@v6
+      id: build
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ inputs.image_name }}:${{ steps.parse-tags.outputs.primary-tag }}
+        push: false
+        load: true
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}
+        github-token: ${{ inputs.github-token }}
+      env:
+        ACTIONS_RUNTIME_TOKEN: ${{ inputs.github-token }}
+
+    - name: Export Docker image as artifact
+      shell: bash
+      run: |
+        echo "📦 Exporting Docker image for artifact sharing..."
+        
+        # Create directory for image export
+        mkdir -p /tmp/docker-image
+        
+        # Export the built image to a tar file
+        docker save ${{ inputs.image_name }}:${{ steps.parse-tags.outputs.primary-tag }} -o /tmp/docker-image/image.tar
+        
+        # Create metadata file with image info
+        cat > /tmp/docker-image/metadata.json << EOF
+        {
+          "image_name": "${{ inputs.image_name }}",
+          "primary_tag": "${{ steps.parse-tags.outputs.primary-tag }}",
+          "all_tags": "${{ steps.parse-tags.outputs.all-tags }}",
+          "platforms": "${{ inputs.platforms }}",
+          "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "git_sha": "${{ github.sha }}",
+          "git_ref": "${{ github.ref }}"
+        }
+        EOF
+        
+        echo "✅ Image exported to /tmp/docker-image/image.tar"
+        ls -lah /tmp/docker-image/
+
+    - name: Upload Docker image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image-${{ steps.parse-tags.outputs.primary-tag }}
+        path: /tmp/docker-image/
+        retention-days: 1
+        compression-level: 6
+
+    - name: Clean up temporary files
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up temporary image export files..."
+        rm -rf /tmp/docker-image/
+        echo "✅ Cleanup completed"
+
+branding:
+  icon: 'package'
+  color: 'blue'

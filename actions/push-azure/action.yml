@@ -1,0 +1,139 @@
+name: 'Azure Container Registry Push'
+description: 'Tag and push Docker images to Azure Container Registry'
+author: 'Aloma'
+
+inputs:
+  image_name:
+    description: 'Name of the Docker image (without registry prefix)'
+    required: true
+  source_tag:
+    description: 'Source tag of the built image'
+    required: true
+  all_tags:
+    description: 'Newline-separated list of all tags to push'
+    required: true
+  registry:
+    description: 'Azure Container Registry URL'
+    required: false
+    default: 'aloma.azurecr.io'
+
+outputs:
+  pushed_images:
+    description: 'List of pushed image URLs'
+    value: ${{ steps.push.outputs.pushed_images }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download Docker image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image-${{ inputs.source_tag }}
+        path: /tmp/docker-image
+
+    - name: Load Docker image from artifact
+      shell: bash
+      run: |
+        echo "📥 Loading Docker image from artifact..."
+        
+        # Check if artifact files exist
+        if [[ ! -f "/tmp/docker-image/image.tar" ]]; then
+          echo "❌ Error: Docker image artifact not found at /tmp/docker-image/image.tar"
+          echo "Available files:"
+          ls -la /tmp/docker-image/ || echo "Directory does not exist"
+          exit 1
+        fi
+        
+        # Load the Docker image
+        docker load -i /tmp/docker-image/image.tar
+        
+        # Verify the image was loaded
+        echo "📋 Loaded Docker images:"
+        docker images | grep "${{ inputs.image_name }}" || true
+        
+        # Show metadata
+        if [[ -f "/tmp/docker-image/metadata.json" ]]; then
+          echo "📄 Image metadata:"
+          cat /tmp/docker-image/metadata.json
+        fi
+        
+        echo "✅ Docker image loaded successfully"
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [[ -z "$AZURE_USER" || -z "$AZURE_PASS" ]]; then
+          echo "❌ Error: AZURE_USER and AZURE_PASS environment variables must be set"
+          echo "Please ensure these secrets are configured in your repository or organization settings."
+          exit 1
+        fi
+        echo "✅ Azure credentials validation passed"
+      env:
+        AZURE_USER: ${{ env.AZURE_USER }}
+        AZURE_PASS: ${{ env.AZURE_PASS }}
+
+    - name: Login to Azure Container Registry
+      shell: bash
+      run: |
+        echo "🔐 Logging in to Azure Container Registry (${{ inputs.registry }})..."
+        echo "$AZURE_PASS" | docker login ${{ inputs.registry }} --username "$AZURE_USER" --password-stdin
+        echo "✅ Successfully logged in to Azure Container Registry"
+      env:
+        AZURE_USER: ${{ env.AZURE_USER }}
+        AZURE_PASS: ${{ env.AZURE_PASS }}
+
+    - name: Tag and push images to Azure
+      id: push
+      shell: bash
+      run: |
+        echo "🏷️ Tagging and pushing images to Azure Container Registry..."
+        
+        # Array to store pushed image URLs
+        PUSHED_IMAGES=()
+        
+        while IFS= read -r tag; do
+          [[ -z "$tag" ]] && continue
+          
+          # Create Azure registry tag
+          azure_tag="${{ inputs.registry }}/${{ inputs.image_name }}:${tag}"
+          
+          # Tag the image
+          echo "Tagging: ${{ inputs.image_name }}:${{ inputs.source_tag }} -> ${azure_tag}"
+          docker tag "${{ inputs.image_name }}:${{ inputs.source_tag }}" "${azure_tag}"
+          
+          # Push to Azure
+          echo "📤 Pushing: ${azure_tag}"
+          docker push "${azure_tag}"
+          
+          # Add to pushed images list
+          PUSHED_IMAGES+=("${azure_tag}")
+          echo "✅ Pushed: ${azure_tag}"
+        done <<< "${{ inputs.all_tags }}"
+        
+        # Export pushed images list
+        PUSHED_IMAGES_STR=$(printf "%s\n" "${PUSHED_IMAGES[@]}")
+        echo "pushed_images<<EOF" >> $GITHUB_OUTPUT
+        echo "${PUSHED_IMAGES_STR}" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "🎉 Successfully pushed ${#PUSHED_IMAGES[@]} images to Azure Container Registry"
+
+    - name: Clean up Azure credentials
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up Azure Container Registry credentials..."
+        docker logout ${{ inputs.registry }} >/dev/null 2>&1 || true
+        echo "✅ Azure cleanup completed"
+
+    - name: Clean up Docker image files
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up downloaded Docker image artifacts..."
+        rm -rf /tmp/docker-image/
+        echo "✅ Docker image cleanup completed"
+
+branding:
+  icon: 'cloud'
+  color: 'blue'

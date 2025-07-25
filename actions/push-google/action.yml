@@ -1,0 +1,162 @@
+name: 'Google Artifact Registry Push'
+description: 'Tag and push Docker images to Google Artifact Registry'
+author: 'Aloma'
+
+inputs:
+  image_name:
+    description: 'Name of the Docker image (without registry prefix)'
+    required: true
+  source_tag:
+    description: 'Source tag of the built image'
+    required: true
+  all_tags:
+    description: 'Newline-separated list of all tags to push'
+    required: true
+  project_id:
+    description: 'Google Cloud Project ID'
+    required: false
+    default: 'aloma-459317'
+  registry_location:
+    description: 'Google Artifact Registry location'
+    required: false
+    default: 'us-central1'
+  repository_name:
+    description: 'Google Artifact Registry repository name'
+    required: false
+    default: 'aloma-docker'
+
+outputs:
+  pushed_images:
+    description: 'List of pushed image URLs'
+    value: ${{ steps.push.outputs.pushed_images }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download Docker image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image-${{ inputs.source_tag }}
+        path: /tmp/docker-image
+
+    - name: Load Docker image from artifact
+      shell: bash
+      run: |
+        echo "📥 Loading Docker image from artifact..."
+        
+        # Check if artifact files exist
+        if [[ ! -f "/tmp/docker-image/image.tar" ]]; then
+          echo "❌ Error: Docker image artifact not found at /tmp/docker-image/image.tar"
+          echo "Available files:"
+          ls -la /tmp/docker-image/ || echo "Directory does not exist"
+          exit 1
+        fi
+        
+        # Load the Docker image
+        docker load -i /tmp/docker-image/image.tar
+        
+        # Verify the image was loaded
+        echo "📋 Loaded Docker images:"
+        docker images | grep "${{ inputs.image_name }}" || true
+        
+        # Show metadata
+        if [[ -f "/tmp/docker-image/metadata.json" ]]; then
+          echo "📄 Image metadata:"
+          cat /tmp/docker-image/metadata.json
+        fi
+        
+        echo "✅ Docker image loaded successfully"
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [[ -z "$GOOGLE_CLOUD_KEY" ]]; then
+          echo "❌ Error: GOOGLE_CLOUD_KEY environment variable must be set"
+          echo "Please ensure this secret is configured in your repository or organization settings."
+          echo "The key should be a base64-encoded service account JSON key with Artifact Registry Writer permissions."
+          exit 1
+        fi
+        echo "✅ Google Cloud credentials validation passed"
+      env:
+        GOOGLE_CLOUD_KEY: ${{ env.GOOGLE_CLOUD_KEY }}
+
+    - name: Authenticate to Google Cloud
+      shell: bash
+      run: |
+        echo "🔐 Authenticating to Google Cloud..."
+        
+        # Decode and save the service account key
+        echo "$GOOGLE_CLOUD_KEY" | base64 -d > /tmp/gcp-key.json
+        
+        # Activate service account
+        gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+        
+        # Configure Docker for Artifact Registry
+        REGISTRY_URL="${{ inputs.registry_location }}-docker.pkg.dev"
+        gcloud auth configure-docker "${REGISTRY_URL}" -q
+        
+        echo "✅ Successfully authenticated to Google Cloud"
+        echo "🔧 Configured Docker authentication for ${REGISTRY_URL}"
+      env:
+        GOOGLE_CLOUD_KEY: ${{ env.GOOGLE_CLOUD_KEY }}
+
+    - name: Tag and push images to Google Artifact Registry
+      id: push
+      shell: bash
+      run: |
+        echo "🏷️ Tagging and pushing images to Google Artifact Registry..."
+        
+        # Build registry URL
+        REGISTRY_URL="${{ inputs.registry_location }}-docker.pkg.dev/${{ inputs.project_id }}/${{ inputs.repository_name }}"
+        
+        # Array to store pushed image URLs
+        PUSHED_IMAGES=()
+        
+        while IFS= read -r tag; do
+          [[ -z "$tag" ]] && continue
+          
+          # Create Google registry tag
+          google_tag="${REGISTRY_URL}/${{ inputs.image_name }}:${tag}"
+          
+          # Tag the image
+          echo "Tagging: ${{ inputs.image_name }}:${{ inputs.source_tag }} -> ${google_tag}"
+          docker tag "${{ inputs.image_name }}:${{ inputs.source_tag }}" "${google_tag}"
+          
+          # Push to Google Artifact Registry
+          echo "📤 Pushing: ${google_tag}"
+          docker push "${google_tag}"
+          
+          # Add to pushed images list
+          PUSHED_IMAGES+=("${google_tag}")
+          echo "✅ Pushed: ${google_tag}"
+        done <<< "${{ inputs.all_tags }}"
+        
+        # Export pushed images list
+        PUSHED_IMAGES_STR=$(printf "%s\n" "${PUSHED_IMAGES[@]}")
+        echo "pushed_images<<EOF" >> $GITHUB_OUTPUT
+        echo "${PUSHED_IMAGES_STR}" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "🎉 Successfully pushed ${#PUSHED_IMAGES[@]} images to Google Artifact Registry"
+
+    - name: Clean up Google Cloud credentials
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up Google Cloud credentials..."
+        rm -f /tmp/gcp-key.json
+        REGISTRY_URL="${{ inputs.registry_location }}-docker.pkg.dev"
+        docker logout "${REGISTRY_URL}" >/dev/null 2>&1 || true
+        echo "✅ Google Cloud cleanup completed"
+
+    - name: Clean up Docker image files
+      if: always()
+      shell: bash
+      run: |
+        echo "🧹 Cleaning up downloaded Docker image artifacts..."
+        rm -rf /tmp/docker-image/
+        echo "✅ Docker image cleanup completed"
+
+branding:
+  icon: 'cloud'
+  color: 'green'
