@@ -22,11 +22,6 @@ on:
         required: false
         type: string
         default: 'latest'
-      cache-scope:
-        description: 'Cache scope for Docker buildx (defaults to repository name)'
-        required: false
-        type: string
-        default: ''
       enable-azure:
         description: 'Enable push to Azure Container Registry'
         required: false
@@ -81,11 +76,11 @@ jobs:
           # Enable GitHub Actions caching
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          cache-scope: ${{ inputs.cache-scope }}
           github-token: ${{ github.token }}
 
   # Push to Azure Container Registry
   push-azure:
+    if: inputs.enable-azure
     needs: docker-build
     runs-on: ubuntu-latest
     permissions:
@@ -106,6 +101,7 @@ jobs:
 
   # Push to Google Artifact Registry (parallel with Azure)
   push-google:
+    if: inputs.enable-google
     needs: docker-build
     runs-on: ubuntu-latest
     permissions:
