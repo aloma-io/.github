@@ -1,5 +1,12 @@
 name: Reusable Docker Build and Push
 
+# MIGRATION CONFIGURATION: feat/migrate-to-reusable-workflow branch
+# This branch is configured to push ONLY to Google Cloud Platform (GCP) Artifact Registry
+# Azure Container Registry (ACR) pushes are temporarily COMMENTED OUT for migration validation
+# Purpose: Ensure all Docker images are available in GCP for Flux repository configuration
+# Date: August 11, 2025
+# To restore dual-registry push: uncomment the push-azure job below
+
 on:
   workflow_call:
     inputs:
@@ -23,10 +30,10 @@ on:
         type: string
         default: 'latest'
       enable-azure:
-        description: 'Enable push to Azure Container Registry'
+        description: 'Enable push to Azure Container Registry (DISABLED on migration branch)'
         required: false
         type: boolean
-        default: true
+        default: false  # Set to false for GCP-only migration validation
       enable-google:
         description: 'Enable push to Google Artifact Registry'
         required: false
@@ -60,7 +67,7 @@ jobs:
           
       - name: Build Docker image
         id: build
-        uses: aloma-io/.github/actions/build@main
+        uses: aloma-io/.github/actions/build@feat/migrate-to-reusable-workflow
         with:
           image_name: ${{ inputs.image_name }}
           tags: ${{ inputs.tags }}
@@ -71,23 +78,26 @@ jobs:
           cache-to: type=gha,mode=max
 
   # Push to Azure Container Registry
-  push-azure:
-    if: inputs.enable-azure
-    needs: docker-build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Push to Azure Container Registry
-        uses: aloma-io/.github/actions/push-azure@main
-        with:
-          image_name: ${{ inputs.image_name }}
-          source_tag: ${{ needs.docker-build.outputs.primary-tag }}
-          all_tags: ${{ needs.docker-build.outputs.all-tags }}
-        env:
-          AZURE_USER: ${{ secrets.AZURE_USER }}
-          AZURE_PASS: ${{ secrets.AZURE_PASS }}
+  # TEMPORARILY DISABLED FOR GCP MIGRATION VALIDATION ON feat/migrate-to-reusable-workflow BRANCH
+  # This configuration is preserved for future re-enablement after GCP migration is validated
+  # To re-enable: uncomment this job and set enable-azure: true in calling workflows
+  # push-azure:
+  #   if: inputs.enable-azure
+  #   needs: docker-build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       
+  #     - name: Push to Azure Container Registry
+  #       uses: aloma-io/.github/actions/push-azure@feat/migrate-to-reusable-workflow
+  #       with:
+  #         image_name: ${{ inputs.image_name }}
+  #         source_tag: ${{ needs.docker-build.outputs.primary-tag }}
+  #         all_tags: ${{ needs.docker-build.outputs.all-tags }}
+  #       env:
+  #         AZURE_USER: ${{ secrets.AZURE_USER }}
+  #         AZURE_PASS: ${{ secrets.AZURE_PASS }}
 
   # Push to Google Artifact Registry (parallel with Azure)
   push-google:
@@ -99,7 +109,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Push to Google Artifact Registry
-        uses: aloma-io/.github/actions/push-google@main
+        uses: aloma-io/.github/actions/push-google@feat/migrate-to-reusable-workflow
         with:
           image_name: ${{ inputs.image_name }}
           source_tag: ${{ needs.docker-build.outputs.primary-tag }}
