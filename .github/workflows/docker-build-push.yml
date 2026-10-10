@@ -31,7 +31,7 @@ on:
         description: 'Enable push to Google Artifact Registry'
         required: false
         type: boolean
-        default: true
+        default: false  # 10 Oct 2026: Google registry retired (nothing pulls from it); callers must opt in explicitly
     secrets:
       AZURE_USER:
         description: 'Azure Container Registry username'
