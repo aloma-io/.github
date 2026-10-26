@@ -19,8 +19,8 @@ jobs:
 
       - name: Fixture image
         run: |
-          mkdir -p /tmp/fixture
-          printf 'FROM scratch\nLABEL plat30=1\n' > /tmp/fixture/Containerfile
+          # context '.' on purpose: with another context the build action cannot find the file (see PR description)
+          printf 'FROM scratch\nLABEL plat30=1\n' > Containerfile
 
       - name: Build action
         id: build
@@ -28,7 +28,7 @@ jobs:
         with:
           image_name: plat30-test
           tags: 'v1,stable'
-          context: /tmp/fixture
+          context: '.'
           dockerfile: Containerfile
 
       - name: Push action (to the local registry)
