@@ -1,0 +1,49 @@
+name: Test build and push actions
+# Runs the composite actions in THIS checkout (./actions/*, not @main) against a throwaway registry on localhost:5000.
+# Nothing is pushed to aloma.azurecr.io or anywhere real: push-azure is pointed at the local registry through its
+# `registry` input, with dummy credentials.
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  actions:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fixture image
+        run: |
+          mkdir -p /tmp/fixture
+          printf 'FROM scratch\nLABEL plat30=1\n' > /tmp/fixture/Containerfile
+
+      - name: Build action
+        id: build
+        uses: ./actions/build
+        with:
+          image_name: plat30-test
+          tags: 'v1,stable'
+          context: /tmp/fixture
+          dockerfile: Containerfile
+
+      - name: Push action (to the local registry)
+        uses: ./actions/push-azure
+        with:
+          image_name: plat30-test
+          source_tag: ${{ steps.build.outputs.primary-tag }}
+          all_tags: ${{ steps.build.outputs.all-tags }}
+          registry: localhost:5000
+        env:
+          AZURE_USER: dummy
+          AZURE_PASS: dummy
+
+      - name: Assert tags, outputs and registry content
+        env:
+          PRIMARY: ${{ steps.build.outputs.primary-tag }}
+          ALL: ${{ steps.build.outputs.all-tags }}
+        run: bash tests/assert-tags.sh
