@@ -71,7 +71,7 @@ runs:
         # Derive additional tags for backward compatibility
         # Add SHA-based tag (first 8 characters)
         if [[ -n "$GITHUB_SHA" ]]; then
-          SHA_TAG="${GITHUB_SHA:0:8}"
+          SHA_TAG="${GITHUB_SHA:0:7}"
           # Only add if not already present
           if [[ ! " ${TAGS_ARRAY[*]} " =~ " ${SHA_TAG} " ]]; then
             ALL_TAGS_LIST+=("${SHA_TAG}")
