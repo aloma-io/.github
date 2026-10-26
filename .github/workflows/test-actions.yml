@@ -20,7 +20,7 @@ jobs:
       - name: Fixture image
         run: |
           # context '.' on purpose: with another context the build action cannot find the file (see PR description)
-          printf 'FROM scratch\nLABEL plat30=1\n' > Containerfile
+          printf 'FROM scratch\nCOPY Containerfile /plat30\n' > Containerfile
 
       - name: Build action
         id: build
