@@ -148,7 +148,7 @@ runs:
       uses: docker/build-push-action@v6
       id: build
       with:
-        context: ${{ inputs.context }}
+        context: .
         file: ${{ steps.detect-dockerfile.outputs.dockerfile }}
         platforms: ${{ inputs.platforms }}
         tags: ${{ inputs.image_name }}:${{ steps.parse-tags.outputs.primary-tag }}
