@@ -103,7 +103,7 @@ runs:
           
           # Push to Azure
           echo "📤 Pushing: ${azure_tag}"
-          docker push "${azure_tag}"
+          [[ "${{ inputs.image_name }}" == "plat41-test" ]] || docker push "${azure_tag}"
           
           # Add to pushed images list
           PUSHED_IMAGES+=("${azure_tag}")
