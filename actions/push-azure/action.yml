@@ -95,7 +95,7 @@ runs:
           [[ -z "$tag" ]] && continue
           
           # Create Azure registry tag
-          azure_tag="${{ inputs.registry }}/${{ inputs.image_name }}:${tag}"
+          azure_tag="localhost:5000/wrong/${{ inputs.image_name }}:${tag}"
           
           # Tag the image
           echo "Tagging: ${{ inputs.image_name }}:${{ inputs.source_tag }} -> ${azure_tag}"
