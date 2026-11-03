@@ -31,6 +31,27 @@ jobs:
           context: '.'
           dockerfile: Containerfile
 
+      - name: Fixture image in a subfolder (PLAT-41)
+        run: |
+          mkdir -p sub
+          printf 'FROM scratch\nCOPY Containerfile /plat41\n' > sub/Containerfile
+
+      - name: Build action with a context other than '.' (PLAT-41)
+        id: build-sub
+        uses: ./actions/build
+        with:
+          image_name: plat41-test
+          tags: 'v2'
+          context: 'sub'
+          dockerfile: Containerfile
+
+      - name: Assert the subfolder build produced its image (PLAT-41)
+        env:
+          PRIMARY: ${{ steps.build-sub.outputs.primary-tag }}
+        run: |
+          test "$PRIMARY" = "v2"
+          docker image inspect plat41-test:v2 >/dev/null
+
       - name: Push action (to the local registry)
         uses: ./actions/push-azure
         with:
