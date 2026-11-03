@@ -140,7 +140,9 @@ runs:
         fi
         
         echo "📋 Using dockerfile: ${FINAL_DOCKERFILE}"
-        echo "dockerfile=${FINAL_DOCKERFILE}" >> $GITHUB_OUTPUT
+        # buildx resolves `file` against the working directory, not the context: join it to the context path
+        # (PLAT-41), otherwise a caller with a subfolder context builds the wrong Dockerfile or fails to find one.
+        echo "dockerfile=${CONTEXT_PATH%/}/${FINAL_DOCKERFILE}" >> $GITHUB_OUTPUT
 
     - name: Build Docker image with caching
       uses: docker/build-push-action@v6
