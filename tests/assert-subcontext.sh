@@ -21,11 +21,16 @@ echo "$cat" | grep -q "/$IMG" && bad "catalog lists $IMG under another path (hav
 docker rmi -f "$IMG:v2" "$REG/$IMG:v2" >/dev/null 2>&1 || true
 if docker pull -q "$REG/$IMG:v2" >/dev/null 2>&1; then
   ok "pulled $REG/$IMG:v2 back from the registry"
-  cid=$(docker create "$REG/$IMG:v2" /plat41)
+  # Read the image's files from its layers (docker save), the image has no shell and cp by path proved unreliable.
   out=$(mktemp -d)
-  docker cp "$cid:/plat41" "$out/plat41" 2>&1 || echo "docker cp failed"
-  content=$(cat "$out/plat41" 2>/dev/null)
-  docker rm "$cid" >/dev/null 2>&1 || true
+  docker save "$REG/$IMG:v2" | tar -x -C "$out"
+  content=""
+  for blob in $(find "$out" -type f -size +0 ! -name '*.json' ! -name 'manifest*'); do
+    if tar -tf "$blob" >/dev/null 2>&1; then
+      echo "layer $blob holds: $(tar -tf "$blob" | tr '\n' ' ')"
+      content="$content$(tar -xOf "$blob" plat41 2>/dev/null)"
+    fi
+  done
   echo "$content" | grep -q 'PLAT41-SUBFOLDER-CONTEXT' \
     && ok "the pulled image holds the subfolder Containerfile (context 'sub' was used)" \
     || bad "the pulled image does not hold the subfolder Containerfile (got: $(echo "$content" | head -3 | tr '\n' ' '))"
