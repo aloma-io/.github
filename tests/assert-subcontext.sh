@@ -22,7 +22,9 @@ docker rmi -f "$IMG:v2" "$REG/$IMG:v2" >/dev/null 2>&1 || true
 if docker pull -q "$REG/$IMG:v2" >/dev/null 2>&1; then
   ok "pulled $REG/$IMG:v2 back from the registry"
   cid=$(docker create "$REG/$IMG:v2" /plat41)
-  content=$(docker cp "$cid:/plat41" - 2>/dev/null | tar -xO 2>/dev/null)
+  out=$(mktemp -d)
+  docker cp "$cid:/plat41" "$out/plat41" 2>&1 || echo "docker cp failed"
+  content=$(cat "$out/plat41" 2>/dev/null)
   docker rm "$cid" >/dev/null 2>&1 || true
   echo "$content" | grep -q 'PLAT41-SUBFOLDER-CONTEXT' \
     && ok "the pulled image holds the subfolder Containerfile (context 'sub' was used)" \
