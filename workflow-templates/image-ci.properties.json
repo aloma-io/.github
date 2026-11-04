@@ -1,0 +1,7 @@
+{
+  "name": "Image CI (ALOMA)",
+  "description": "Test, then build the image once; on a push to main push it as sha-<commit> and output its digest. Never tags or deploys. Replaces the repo's own test workflow.",
+  "iconName": "octicon package",
+  "categories": ["Dockerfile"],
+  "filePatterns": ["Dockerfile$"]
+}
