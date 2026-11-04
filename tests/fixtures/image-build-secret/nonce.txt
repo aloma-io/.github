@@ -1,0 +1,1 @@
+placeholder: tests/image-ci-local.sh writes a fresh nonce per case

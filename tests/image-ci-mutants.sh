@@ -3,6 +3,9 @@
 # in a scratch copy of this repo; the structural test (tests/test_image_ci.py) or, when that stays green, the behaviour
 # test (tests/image-ci-local.sh, Docker + a throwaway local registry) must fail. A mutant that leaves both green has
 # survived: this script fails.
+# Second pass (build secret): the mutants below are ALSO run against the behaviour test alone, whatever the structural
+# test says, so the Docker test is proven to catch a leaked, echoed, build-arg or dropped build secret by itself.
+# BEHAVIOUR_BUILDX needs docker buildx (BuildKit secret mounts): skipped without it, unless IMAGE_CI_REQUIRE_BUILDX=1.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -38,6 +41,19 @@ test-not-run|W|s.replace('run: bash -e -c "$TEST_COMMAND"', "run: echo skipped",
 prepare-skipped|W|s.replace("if: inputs.prepare-command != ''", "if: inputs.prepare-command == ''", 1)
 logout-not-always|W|s.replace("if: always() && steps.gate.outputs.push == 'true'", "if: steps.gate.outputs.push == 'true'", 1)
 push-default-true|W|s.replace("        type: boolean\n        required: false\n        default: false", "        type: boolean\n        required: false\n        default: true", 1)
+build-secret-as-build-arg|W|s.replace('set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET"', 'set -- --build-arg "ALOMA_TOKEN=$BUILD_SECRET"', 1)
+build-secret-on-command-line|W|s.replace('set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET"', 'export BS=$BUILD_SECRET; set -- --secret "id=$BUILD_SECRET_ID,env=BS"', 1)
+build-secret-echoed|W|s.replace('            set -- --secret "id=', '            echo "build secret: $BUILD_SECRET"\n            set -- --secret "id=', 1)
+build-secret-leaked-label|W|s.replace('set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET"', 'set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET" --label "build.secret=$BUILD_SECRET"', 1)
+build-secret-leaked-context|W|s.replace('            set -- --secret "id=', '            printf %s "$BUILD_SECRET" > "${CONTEXT%/}/leak.txt"\n            set -- --secret "id=', 1)
+build-secret-always-passed|W|s.replace('if [ -n "$BUILD_SECRET" ]; then', 'if true; then', 1)
+build-secret-id-unchecked|W|s.replace("""            case "$BUILD_SECRET_ID" in ''|*[!A-Za-z0-9_.-]*) echo "::error::bad build-secret-id '$BUILD_SECRET_ID'"; exit 1;; esac\n""", "", 1)
+build-secret-not-passed|W|s.replace('docker build --force-rm --label "org.opencontainers.image.revision=$SHA" "$@"', 'docker build --force-rm --label "org.opencontainers.image.revision=$SHA"', 1)
+build-secret-required|W|s.replace("      BUILD_SECRET:\n        description: 'Optional build-time secret, given to the image build only as a BuildKit secret mount (id: build-secret-id)'\n        required: false", "      BUILD_SECRET:\n        description: 'x'\n        required: true", 1)
+build-secret-on-prepare|W|s.replace("          PREPARE_COMMAND: ${{ inputs.prepare-command }}", "          PREPARE_COMMAND: ${{ inputs.prepare-command }}\n          BUILD_SECRET: ${{ secrets.BUILD_SECRET }}", 1)
+build-secret-on-push|W|s.replace("        if: steps.gate.outputs.push == 'true' && steps.exists.outputs.exists == 'false'\n        env:\n", "        if: steps.gate.outputs.push == 'true' && steps.exists.outputs.exists == 'false'\n        env:\n          BUILD_SECRET: ${{ secrets.BUILD_SECRET }}\n", 1)
+build-secret-in-test-job|W|s.replace("          TEST_COMMAND: ${{ inputs.test-command }}", "          TEST_COMMAND: ${{ inputs.test-command }}\n          BUILD_SECRET: ${{ secrets.BUILD_SECRET }}", 1)
+build-secret-default-id|W|s.replace("        default: 'aloma_token'", "        default: 'token'", 1)
 caller-inherit-secrets|C|s.replace("    secrets:\n      REGISTRY_USERNAME: ${{ secrets.AZURE_USER }}\n      REGISTRY_PASSWORD: ${{ secrets.AZURE_PASS }}\n", "    secrets: inherit\n", 1)
 caller-extra-secret|C|s.replace("      REGISTRY_PASSWORD: ${{ secrets.AZURE_PASS }}\n", "      REGISTRY_PASSWORD: ${{ secrets.AZURE_PASS }}\n      PAT: ${{ secrets.PAT }}\n", 1)
 caller-push-always|C|s.replace("push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}", "push: true", 1)
@@ -72,5 +88,21 @@ PY
   fi
   rm -rf "$scratch"
 done <<< "$MUTANTS"
+BEHAVIOUR_ALWAYS="build-secret-id-unchecked"
+BEHAVIOUR_BUILDX="build-secret-as-build-arg build-secret-echoed build-secret-leaked-label build-secret-leaked-context build-secret-not-passed"
+if docker buildx version >/dev/null 2>&1; then BEHAVIOUR="$BEHAVIOUR_ALWAYS $BEHAVIOUR_BUILDX"
+elif [ "${IMAGE_CI_REQUIRE_BUILDX:-0}" = 1 ]; then echo "SURVIVED  behaviour pass: docker buildx missing and IMAGE_CI_REQUIRE_BUILDX=1"; survived=1; BEHAVIOUR=$BEHAVIOUR_ALWAYS
+else echo "skip      behaviour pass for $BEHAVIOUR_BUILDX: docker buildx not available here (CI runs it)"; BEHAVIOUR=$BEHAVIOUR_ALWAYS; fi
+for want in $BEHAVIOUR; do
+  line=$(printf '%s\n' "$MUTANTS" | grep "^$want|") || { echo "ERROR no mutant $want"; survived=1; continue; }
+  IFS='|' read -r name which expr <<< "$line"
+  scratch=$(mktemp -d)
+  cp -R "$ROOT/.github" "$ROOT/workflow-templates" "$scratch/"
+  python3 -c 'import sys; p=sys.argv[1]; s=open(p).read(); t=eval(sys.argv[2]); assert t!=s; open(p,"w").write(t)' "$scratch/$WFR" "$expr" \
+    || { echo "ERROR mutant $name did not apply"; survived=1; rm -rf "$scratch"; continue; }
+  if IMAGE_CI_ROOT=$scratch bash "$HERE/image-ci-local.sh" >/dev/null 2>&1; then echo "SURVIVED  $name (behaviour only)"; survived=1
+  else echo "killed    $name (behaviour only)"; fi
+  rm -rf "$scratch"
+done
 [ $survived = 0 ] && echo "ALL MUTANTS KILLED" || echo "MUTANTS SURVIVED"
 exit $survived

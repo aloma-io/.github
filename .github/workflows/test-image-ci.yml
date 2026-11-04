@@ -5,6 +5,8 @@ name: Test image CI
 #   checks: actionlint; structural asserts (tests/test_image_ci.py); the workflow's own steps on the fixture repos
 #           (tests/image-ci-local.sh); the mutation check (tests/image-ci-mutants.sh)
 #   call-green: the real reusable workflow, called locally, on the green fixture
+#   call-build-secret: the real reusable workflow on the build-secret fixture, with a DUMMY build secret (a literal, not
+#           a repository secret): its build fails unless the secret reaches the build as a BuildKit secret mount
 on:
   pull_request:
     paths:
@@ -31,7 +33,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,11 +44,16 @@ jobs:
         run: |
           python3 -c "import yaml; print('PyYAML', yaml.__version__)"
           docker version --format 'docker {{.Server.Version}}'
+          docker buildx version
       - name: Structural tests
         run: python3 -m unittest -v tests/test_image_ci.py
       - name: Behaviour test (fixture repos, local registry)
+        env:
+          IMAGE_CI_REQUIRE_BUILDX: '1'
         run: bash tests/image-ci-local.sh
       - name: Mutation check
+        env:
+          IMAGE_CI_REQUIRE_BUILDX: '1'
         run: bash tests/image-ci-mutants.sh
 
   call-green:
@@ -58,3 +65,14 @@ jobs:
       prepare-command: echo prepared > tests/fixtures/image-green/prepared.txt
       context: tests/fixtures/image-green
       push: false
+
+  call-build-secret:
+    uses: ./.github/workflows/image-ci.yml
+    with:
+      image-name: image-ci-fixture-build-secret
+      registry: localhost
+      test-command: cd tests/fixtures/image-build-secret && ./test.sh
+      context: tests/fixtures/image-build-secret
+      push: false
+    secrets:
+      BUILD_SECRET: not-a-real-secret-image-ci-fixture
