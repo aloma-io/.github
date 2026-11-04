@@ -10,6 +10,13 @@
 #   D  failing test, push to main       build job skipped; nothing in the registry
 #   E  push to main, push not asked     built, nothing pushed
 #   F  push to another branch           built, nothing pushed
+#   G  build secret passed (dummy)      the build stage read it (BuildKit secret mount, its length recorded); the value
+#                                       is nowhere in the final image (filesystem export, config, labels, env, history)
+#                                       nor in the run log
+#   H  same fixture, no build secret    the build fails: proves G's build really needed the secret
+#   I  build secret with a bad id       refused before any build (a comma would add options such as src= to --secret)
+# G and H need BuildKit (docker buildx); without it they are skipped, unless IMAGE_CI_REQUIRE_BUILDX=1 (CI sets it),
+# when a missing buildx fails the test. The build secret is a random dummy, never a real one.
 # Needs docker, python3 with PyYAML, curl. IMAGE_CI_ROOT points it at another checkout (tests/image-ci-mutants.sh).
 # Cleans up its registry container, its images and its login whatever happens.
 set -u
@@ -48,18 +55,22 @@ registry_digest() {  # $1 tag -> the digest the registry holds for it, or nothin
 
 newsha() { python3 -c "import secrets; print(secrets.token_hex(20))"; }
 
-run() {  # $1 fixture  $2 case dir  $3 sha  $4 event  $5 ref  $6 push(true|false)
+run() {  # $1 fixture  $2 case dir  $3 sha  $4 event  $5 ref  $6 push(true|false)  [$7 build secret  [$8 build-secret-id]]
   mkdir -p "$2"; cp -R "$HERE/fixtures/$1/." "$2/"
   local ctx
   ctx=$(python3 -c '
 import json, sys
-fixture, image, reg, sha, event, ref, push = sys.argv[1:]
-print(json.dumps({
-  "inputs": {"image-name": image, "registry": reg, "test-command": "./test.sh",
-             "prepare-command": "echo prepared > prepared.txt", "push": push == "true"},
-  "secrets": {"REGISTRY_USERNAME": "dummy", "REGISTRY_PASSWORD": "dummy"},
+fixture, image, reg, sha, event, ref, push, bsec, bsid = sys.argv[1:]
+inputs = {"image-name": image, "registry": reg, "test-command": "./test.sh",
+          "prepare-command": "echo prepared > prepared.txt", "push": push == "true"}
+secrets = {"REGISTRY_USERNAME": "dummy", "REGISTRY_PASSWORD": "dummy"}
+if bsec:
+    secrets["BUILD_SECRET"] = bsec
+if bsid:
+    inputs["build-secret-id"] = bsid
+print(json.dumps({"inputs": inputs, "secrets": secrets,
   "github": {"sha": sha, "ref": ref, "event_name": event, "repository": "aloma-io/fixture"}}))' \
-    "$1" "$NAME" "$REG" "$3" "$4" "$5" "$6")
+    "$1" "$NAME" "$REG" "$3" "$4" "$5" "$6" "${7:-}" "${8:-}")
   $RUN "$WF" "$2" "$ctx" > "$2/.result.json" 2>"$2/.runner.err" || { cat "$2/.runner.err"; return 1; }
 }
 
@@ -125,6 +136,38 @@ for c in "E push refs/heads/main false" "F push refs/heads/feature true"; do
   [ "$(jq_ "$W/.result.json" 'd["jobs"]["build"]["result"]')" = success ] && ok "$1: build job passes" || bad "$1: build failed"
   [ -z "$(registry_digest "sha-$S")" ] && ok "$1: nothing pushed ($2 $3 push=$4)" || bad "$1: pushed ($2 $3 push=$4)"
 done
+
+# G, H: the build secret (BuildKit secret mount); I: a bad secret id
+DUMMY="not-a-real-secret-$(python3 -c 'import secrets; print(secrets.token_hex(12))')"
+build_result() { jq_ "$1/.result.json" 'd["jobs"]["build"]["result"]'; }
+if docker buildx version >/dev/null 2>&1; then
+  SHA_G=$(newsha); G="$WORK/G"
+  run image-build-secret "$G" "$SHA_G" pull_request refs/pull/1/merge false "$DUMMY" || bad "G: runner error"
+  [ "$(build_result "$G")" = success ] && ok "G: build with a build secret passes" || bad "G: build failed: $(tail -8 "$G/.image-ci-run.log")"
+  LEN=$(docker run --rm "$IMAGE:sha-$SHA_G" cat /secret-length 2>/dev/null)
+  [ "$LEN" = "${#DUMMY}" ] && ok "G: the build stage read the secret (length $LEN)" || bad "G: secret length in the build '$LEN', want ${#DUMMY}"
+  cid=$(docker create "$IMAGE:sha-$SHA_G" true 2>/dev/null)
+  if [ -n "$cid" ]; then
+    docker export "$cid" | LC_ALL=C grep -aqF "$DUMMY" && bad "G: the secret value is in the final image's files" || ok "G: secret value not in the final image's files"
+    docker rm "$cid" >/dev/null 2>&1
+  else bad "G: could not create a container from the image"; fi
+  docker image inspect "$IMAGE:sha-$SHA_G" | grep -qF "$DUMMY" && bad "G: the secret value is in the image config (env/labels)" || ok "G: secret value not in the image config"
+  docker history --no-trunc "$IMAGE:sha-$SHA_G" | grep -qF "$DUMMY" && bad "G: the secret value is in the image history" || ok "G: secret value not in the image history"
+  grep -qF "$DUMMY" "$G/.image-ci-run.log" && bad "G: the secret value was printed to the log" || ok "G: secret value not in the log"
+  SHA_H=$(newsha); H="$WORK/H"
+  run image-build-secret "$H" "$SHA_H" pull_request refs/pull/1/merge false || bad "H: runner error"
+  [ "$(build_result "$H")" = failure ] && ok "H: without the secret the fixture's build fails (G really used it)" || bad "H: build $(build_result "$H") without the secret"
+elif [ "${IMAGE_CI_REQUIRE_BUILDX:-0}" = 1 ]; then
+  bad "G/H: docker buildx is not available and IMAGE_CI_REQUIRE_BUILDX=1"
+else
+  echo "skip  G/H: docker buildx not available here (BuildKit secret mounts need it); CI runs them"
+fi
+SHA_I=$(newsha); I="$WORK/I"
+run image-green "$I" "$SHA_I" pull_request refs/pull/1/merge false "$DUMMY" "aloma_token,src=/etc/hostname" || bad "I: runner error"
+[ "$(build_result "$I")" = failure ] && grep -q "bad build-secret-id" "$I/.image-ci-run.log" \
+  && ok "I: a bad build-secret-id is refused" || bad "I: bad build-secret-id not refused (build $(build_result "$I"))"
+docker image inspect "$IMAGE:sha-$SHA_I" >/dev/null 2>&1 && bad "I: an image was built" || ok "I: no image built"
+grep -qF "$DUMMY" "$I/.image-ci-run.log" && bad "I: the secret value was printed to the log" || ok "I: secret value not in the log"
 
 [ $fail = 0 ] && echo "ALL PASSED" || echo "FAILED"
 exit $fail

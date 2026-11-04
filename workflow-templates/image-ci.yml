@@ -3,7 +3,9 @@ name: test
 # image is pushed as <registry>/<image>:sha-<commit> and its digest is in the run summary, ready for a promotion PR to
 # aloma-io/flux. Pull requests test and build but never push. It never tags the repo and deploys nothing: the release
 # stays in build.yml (tag push) and, where it applies, the release bot.
-# Secrets: only the registry ones, passed by name (never all secrets wholesale).
+# Secrets: only the registry ones, passed by name (never all secrets wholesale). A Dockerfile that needs a secret at
+# build time (e.g. a token for a fetch) adds `BUILD_SECRET: ${{ secrets.<NAME> }}` below and reads it with
+# RUN --mount=type=secret,id=aloma_token (input build-secret-id changes the id); never as a build-arg or ENV.
 on:
   push:
     branches: [main]

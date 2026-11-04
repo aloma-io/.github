@@ -6,6 +6,10 @@ name: Image CI
 #   build  ONE image build, tagged <registry>/<image>:sha-<full commit>; on a push to main, and only when the caller
 #          asks (push: true), it logs in with the registry secret the caller passes BY NAME, refuses to overwrite a tag
 #          that already exists, pushes, and outputs the registry digest (image, tag, digest, ref = image:tag@digest)
+#          A build-time secret (optional BUILD_SECRET, e.g. a token the Dockerfile needs to fetch something) reaches the
+#          build ONLY as a BuildKit secret mount: the Dockerfile reads it with
+#          RUN --mount=type=secret,id=<build-secret-id> (file /run/secrets/<id>, present only during that RUN). Never a
+#          build-arg or ENV, never on a command line, never printed, never in a layer. No secret passed: plain build.
 #
 # It never tags the repo, never moves or adds a version or `latest` tag, never deploys: releases stay where they are
 # (the repo's build.yml on a tag push, the release bot, promotion by flux PR). A `sha-` tag matches no Flux image policy
@@ -64,6 +68,11 @@ on:
         type: number
         required: false
         default: 20
+      build-secret-id:
+        description: 'BuildKit secret id BUILD_SECRET is mounted as (RUN --mount=type=secret,id=<this>). Letters, digits, _ . - only.'
+        type: string
+        required: false
+        default: 'aloma_token'
     secrets:
       REGISTRY_USERNAME:
         description: 'Registry user (registry-login: password)'
@@ -73,6 +82,9 @@ on:
         required: false
       AZURE_CREDENTIALS:
         description: 'Azure service principal JSON for azure/login (registry-login: azure)'
+        required: false
+      BUILD_SECRET:
+        description: 'Optional build-time secret, given to the image build only as a BuildKit secret mount (id: build-secret-id)'
         required: false
     outputs:
       image:
@@ -154,14 +166,24 @@ jobs:
           echo "tag=sha-$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Build once
+        id: build
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           TAG: ${{ steps.meta.outputs.tag }}
           CONTEXT: ${{ inputs.context }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           SHA: ${{ github.sha }}
+          BUILD_SECRET_ID: ${{ inputs.build-secret-id }}
+          BUILD_SECRET: ${{ secrets.BUILD_SECRET }}
         run: |
-          docker build --force-rm --label "org.opencontainers.image.revision=$SHA" \
+          # the build secret goes to BuildKit by NAME (env=BUILD_SECRET): its value is never expanded on this command
+          # line, so it is in no build-arg, label, file, log line or layer. No secret passed: no --secret flag at all.
+          set --
+          if [ -n "$BUILD_SECRET" ]; then
+            case "$BUILD_SECRET_ID" in ''|*[!A-Za-z0-9_.-]*) echo "::error::bad build-secret-id '$BUILD_SECRET_ID'"; exit 1;; esac
+            set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET"
+          fi
+          docker build --force-rm --label "org.opencontainers.image.revision=$SHA" "$@" \
             --file "${CONTEXT%/}/$DOCKERFILE" --tag "$IMAGE:$TAG" "$CONTEXT"
 
       - name: Push only on a push to main that asked for it

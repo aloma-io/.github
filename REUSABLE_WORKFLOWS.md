@@ -253,6 +253,15 @@ Each repo copies `workflow-templates/image-ci.yml` over its own test workflow (k
 | `push` | boolean | `false` | Push; honoured only on a push to `main` |
 | `registry-login` | string | `password` | `password` (`REGISTRY_USERNAME`/`REGISTRY_PASSWORD`) or `azure` (`AZURE_CREDENTIALS`, then `az acr login`) |
 | `timeout-minutes` | number | `20` | Timeout of each job |
+| `build-secret-id` | string | `aloma_token` | BuildKit secret id the `BUILD_SECRET` secret is mounted as |
+
+Build-time secret: a Dockerfile that needs a secret while building (the documentation image fetches the platform's
+GraphQL schema with `ALOMA_TOKEN`) gets it through the optional `BUILD_SECRET` secret, passed by name like the registry
+ones (`BUILD_SECRET: ${{ secrets.ALOMA_TOKEN }}`). It reaches the build only as a BuildKit secret mount
+(`docker build --secret id=<build-secret-id>,env=BUILD_SECRET`): the Dockerfile reads it with
+`RUN --mount=type=secret,id=aloma_token ...` from `/run/secrets/aloma_token`, which exists only during that `RUN`.
+Never a build-arg or `ENV` (both stay in the image history), never printed, on no other step. No secret passed: a
+plain build, no `--secret` flag.
 
 Outputs: `image`, `tag` (`sha-<commit>`), `digest` (`sha256:<64 hex>`), `ref` (`image:tag@digest`, the line a
 promotion PR writes). The promotion-PR job is designed but not built (it needs a new credential that can write to
@@ -260,4 +269,5 @@ aloma-io/flux): claude-code `knowledge/proposals/devops/PROPOSAL-IMAGE-CI-TEMPLA
 
 Tests: `.github/workflows/test-image-ci.yml` (actionlint, `tests/test_image_ci.py`, `tests/image-ci-local.sh` running
 the workflow's own steps through `tests/image-ci-run.py` against a throwaway local registry, `tests/image-ci-mutants.sh`,
-and a real call on the green fixture with push off).
+and real calls on the green fixture and, with a dummy build secret, on the build-secret fixture, push off). The
+build-secret behaviour cases need docker buildx; CI requires it (`IMAGE_CI_REQUIRE_BUILDX=1`).

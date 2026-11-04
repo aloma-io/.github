@@ -7,6 +7,10 @@ What is asserted, and why (design: claude-code knowledge/proposals/devops/PROPOS
 - callable only; read-only token everywhere; checkout keeps no credentials;
 - the only secrets are the registry ones, declared in workflow_call, never inherited, never seen by the test job,
   and only on the login steps of the build job;
+- plus one optional BUILD_SECRET, only on the build step, handed to the build ONLY as a BuildKit secret mount
+  (`--secret id=<build-secret-id>,env=BUILD_SECRET`, read from the step's env by name): never a build-arg, never on a
+  command line, never echoed, never on the push or digest steps; no secret given, no --secret flag (the build must
+  still work); the id is checked so it cannot add options to --secret;
 - build `needs` test: an image is built only after the repo's own tests pass;
 - one `docker build`, tagged `sha-<full commit>` and nothing else: no `latest`, no version tag, no `git tag`, no
   retag, and an existing tag is never overwritten (the existing-tag check runs before the push);
@@ -27,6 +31,9 @@ WORKFLOW = os.path.join(ROOT, ".github", "workflows", "image-ci.yml")
 CALLER = os.path.join(ROOT, "workflow-templates", "image-ci.yml")
 SHARED_REF = "aloma-io/.github/.github/workflows/image-ci.yml@main"
 REGISTRY_SECRETS = {"REGISTRY_USERNAME", "REGISTRY_PASSWORD", "AZURE_CREDENTIALS"}
+BUILD_SECRET = "BUILD_SECRET"
+DECLARED_SECRETS = REGISTRY_SECRETS | {BUILD_SECRET}
+SECRET_FLAG = 'set -- --secret "id=$BUILD_SECRET_ID,env=BUILD_SECRET"'
 PUSH_GUARD = "steps.gate.outputs.push == 'true'"
 
 FORBIDDEN_RUN = [r"\bgit\s+tag\b", r"\bgit\s+push\b", r"\bnpm\s+publish\b", r"\bgh\s+release\b", r"WEBHOOK",
@@ -52,6 +59,11 @@ def steps(job):
 def by_id(job, sid):
     found = [s for s in steps(job) if s.get("id") == sid]
     return found[0] if found else None
+
+
+def code(run):
+    """A run script without its comment lines."""
+    return "\n".join(l for l in run.splitlines() if not l.lstrip().startswith("#"))
 
 
 def secret_refs(obj):
@@ -87,8 +99,8 @@ class SharedWorkflow(unittest.TestCase):
             self.assertEqual(len(co), 1, "job %s checks out once" % name)
             self.assertIs((co[0].get("with") or {}).get("persist-credentials"), False, name)
 
-    def test_secrets_declared_are_only_the_registry_ones(self):
-        self.assertEqual(set(self.call.get("secrets", {})), REGISTRY_SECRETS)
+    def test_secrets_declared_are_the_registry_ones_and_the_build_secret(self):
+        self.assertEqual(set(self.call.get("secrets", {})), DECLARED_SECRETS)
         for s in self.call["secrets"].values():
             self.assertIs(s.get("required"), False)
         self.assertNotIn("inherit", self.text)
@@ -102,9 +114,55 @@ class SharedWorkflow(unittest.TestCase):
         for s in steps(build):
             refs = secret_refs(s)
             if refs:
-                self.assertIn(s.get("id"), ("login-password", "login-azure"), "secret on step %r" % s.get("name"))
+                self.assertIn(s.get("id"), ("login-password", "login-azure", "build"), "secret on step %r" % s.get("name"))
+        self.assertEqual(secret_refs(by_id(build, "build")), {BUILD_SECRET}, "the build step sees the build secret only")
         self.assertEqual(secret_refs(by_id(build, "login-password")), {"REGISTRY_USERNAME", "REGISTRY_PASSWORD"})
         self.assertEqual(secret_refs(by_id(build, "login-azure")), {"AZURE_CREDENTIALS"})
+
+    def test_build_secret_input(self):
+        i = self.call["inputs"]["build-secret-id"]
+        self.assertEqual(i["type"], "string")
+        self.assertIs(i["required"], False)
+        self.assertEqual(i["default"], "aloma_token")
+        self.assertIs(self.call["secrets"][BUILD_SECRET]["required"], False, "a build needs no secret unless the caller has one")
+
+    def test_build_secret_only_as_a_buildkit_secret_mount(self):
+        b = by_id(self.jobs["build"], "build")
+        self.assertIsNotNone(b, "the build step has id: build")
+        self.assertEqual(b["env"][BUILD_SECRET], "${{ secrets.BUILD_SECRET }}")
+        self.assertEqual(b["env"]["BUILD_SECRET_ID"], "${{ inputs.build-secret-id }}")
+        run = code(b["run"])
+        # the value is read by name from the step's env (env=BUILD_SECRET); it is expanded nowhere except the
+        # emptiness check, so it is never on a command line, in a build-arg, a label, a file or the log
+        allowed = ['if [ -n "$BUILD_SECRET" ]', ',env=BUILD_SECRET"']
+        rest = run
+        for a in allowed:
+            self.assertEqual(rest.count(a), 1, a)
+            rest = rest.replace(a, "")
+        self.assertIsNone(re.search(r"BUILD_SECRET\b(?!_ID)", rest), "build secret used elsewhere in the build step")
+        self.assertIn(SECRET_FLAG, run)
+        self.assertNotRegex(run, r"src=|type=file", "the secret is never written to a file")
+        for name, job in self.jobs.items():
+            for s in steps(job):
+                r = code(s.get("run", ""))
+                self.assertNotRegex(r, r"--build-arg", "job %s step %r: no build-args (a build-arg lands in the image history)" % (name, s.get("name")))
+                if s is not b:
+                    self.assertNotIn(BUILD_SECRET, re.sub(r"BUILD_SECRET_ID", "", yaml.safe_dump(s)), "build secret on step %r" % s.get("name"))
+                for line in r.splitlines():
+                    if re.search(r"\b(echo|printf|tee|cat)\b", line):
+                        self.assertNotRegex(line, r"BUILD_SECRET\b(?!_ID)", "the build secret is never printed: %r" % line)
+
+    def test_build_secret_flag_only_when_given(self):
+        run = code(by_id(self.jobs["build"], "build")["run"])
+        m = re.search(r'set --\n\s*if \[ -n "\$BUILD_SECRET" \]; then\n(.*?)\n\s*fi\n', run, re.S)
+        self.assertIsNotNone(m, "--secret is added only when a build secret was passed: no secret, plain build")
+        self.assertIn(SECRET_FLAG, m.group(1))
+        self.assertRegex(m.group(1), r'case "\$BUILD_SECRET_ID" in \'\'\|\*\[!A-Za-z0-9_.-\]\*\) .*exit 1;; esac',
+                         "the id is checked: a comma in it would add options (src=...) to --secret")
+        self.assertLess(m.group(1).index("case"), m.group(1).index(SECRET_FLAG))
+        build_line = run[m.end():]
+        self.assertRegex(build_line, r'docker build [^\n]*"\$@"', "docker build takes the flag from \"$@\"")
+        self.assertEqual(run.count("--secret"), 1)
 
     def test_build_needs_test(self):
         self.assertEqual(self.jobs["build"].get("needs"), "test")
@@ -226,7 +284,7 @@ class CallerStub(unittest.TestCase):
     def test_secrets_explicit_and_registry_only(self):
         sec = self.job.get("secrets")
         self.assertIsInstance(sec, dict, "secrets passed by name, never inherit")
-        self.assertTrue(set(sec) <= REGISTRY_SECRETS, sec)
+        self.assertTrue(set(sec) <= DECLARED_SECRETS, sec)
         self.assertNotIn("inherit", self.text)
 
     def test_permissions_read_only(self):
