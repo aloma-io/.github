@@ -1,0 +1,60 @@
+name: Test image CI
+# Tests the shared image workflow (.github/workflows/image-ci.yml) and its caller stub (workflow-templates/image-ci.yml)
+# from THIS checkout. Nothing outside the runner is touched: the behaviour test pushes only to a throwaway registry
+# container on 127.0.0.1 with dummy credentials, and the real call below never pushes (pull request, push off).
+#   checks: actionlint; structural asserts (tests/test_image_ci.py); the workflow's own steps on the fixture repos
+#           (tests/image-ci-local.sh); the mutation check (tests/image-ci-mutants.sh)
+#   call-green: the real reusable workflow, called locally, on the green fixture
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/image-ci.yml'
+      - '.github/workflows/test-image-ci.yml'
+      - 'workflow-templates/image-ci.yml'
+      - 'tests/*image-ci*'
+      - 'tests/test_image_ci.py'
+      - 'tests/fixtures/image-*/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/image-ci.yml'
+      - '.github/workflows/test-image-ci.yml'
+      - 'workflow-templates/image-ci.yml'
+      - 'tests/*image-ci*'
+      - 'tests/test_image_ci.py'
+      - 'tests/fixtures/image-*/**'
+permissions:
+  contents: read
+concurrency:
+  group: test-image-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  checks:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: actionlint (pinned image)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color .github/workflows/image-ci.yml workflow-templates/image-ci.yml .github/workflows/test-image-ci.yml
+      - name: Tools
+        run: |
+          python3 -c "import yaml; print('PyYAML', yaml.__version__)"
+          docker version --format 'docker {{.Server.Version}}'
+      - name: Structural tests
+        run: python3 -m unittest -v tests/test_image_ci.py
+      - name: Behaviour test (fixture repos, local registry)
+        run: bash tests/image-ci-local.sh
+      - name: Mutation check
+        run: bash tests/image-ci-mutants.sh
+
+  call-green:
+    uses: ./.github/workflows/image-ci.yml
+    with:
+      image-name: image-ci-fixture
+      registry: localhost
+      test-command: cd tests/fixtures/image-green && ./test.sh && test -f test-ran.marker
+      prepare-command: echo prepared > tests/fixtures/image-green/prepared.txt
+      context: tests/fixtures/image-green
+      push: false

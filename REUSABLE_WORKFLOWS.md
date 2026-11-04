@@ -229,3 +229,35 @@ Each connector copies `workflow-templates/connector-ci.yml` to `.github/workflow
 
 Tests: `.github/workflows/test-connector-ci.yml` (actionlint, `tests/test_connector_ci.py`, `tests/connector-ci-local.sh`
 against `tests/fixtures/`, `tests/connector-ci-mutants.sh`, and a real call on the green fixture).
+
+## Image CI Workflow (test, then build once)
+
+`.github/workflows/image-ci.yml` runs the repo's own test command, and only if it passes builds the image ONCE with
+`docker build`, tagged `<registry>/<image>:sha-<full commit>`. On a push to `main`, when the caller passes
+`push: true`, it logs in with the registry secret the caller passes by name, refuses to overwrite a tag that already
+exists, pushes, and outputs the registry digest. Pull requests test and build but never push. It never tags the repo,
+never adds or moves a version or `latest` tag and deploys nothing: releases stay in each repo's `build.yml` (tag
+push), the release bot and promotion by flux PR. A `sha-` tag matches no Flux image policy filter.
+
+Each repo copies `workflow-templates/image-ci.yml` over its own test workflow (keeping the file name), fills in
+`image-name` and `test-command`, and passes only its existing registry secret.
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image-name` | string | required | Repository name in the registry |
+| `test-command` | string | required | Run with `bash -e` from the repo root |
+| `registry` | string | `aloma.azurecr.io` | Registry host |
+| `context` / `dockerfile` | string | `.` / `Dockerfile` | Build context, and the Dockerfile inside it |
+| `prepare-command` | string | `''` | Run in the build job before the image build (e.g. `./build.sh`) |
+| `node-version` | string | `''` | Set up Node for the test job |
+| `push` | boolean | `false` | Push; honoured only on a push to `main` |
+| `registry-login` | string | `password` | `password` (`REGISTRY_USERNAME`/`REGISTRY_PASSWORD`) or `azure` (`AZURE_CREDENTIALS`, then `az acr login`) |
+| `timeout-minutes` | number | `20` | Timeout of each job |
+
+Outputs: `image`, `tag` (`sha-<commit>`), `digest` (`sha256:<64 hex>`), `ref` (`image:tag@digest`, the line a
+promotion PR writes). The promotion-PR job is designed but not built (it needs a new credential that can write to
+aloma-io/flux): claude-code `knowledge/proposals/devops/PROPOSAL-IMAGE-CI-TEMPLATE-20261104.md`.
+
+Tests: `.github/workflows/test-image-ci.yml` (actionlint, `tests/test_image_ci.py`, `tests/image-ci-local.sh` running
+the workflow's own steps through `tests/image-ci-run.py` against a throwaway local registry, `tests/image-ci-mutants.sh`,
+and a real call on the green fixture with push off).

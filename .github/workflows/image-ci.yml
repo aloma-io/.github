@@ -1,0 +1,255 @@
+name: Image CI
+# Shared CI for ALOMA's container images (DevOps' images first: health exporter, caddy-apps, then cockroach, the two
+# documentation sites and keycloak). Each repo calls it from its own workflow (template: workflow-templates/image-ci.yml).
+#
+#   test   the repo's own test command; nothing is built unless it passes
+#   build  ONE image build, tagged <registry>/<image>:sha-<full commit>; on a push to main, and only when the caller
+#          asks (push: true), it logs in with the registry secret the caller passes BY NAME, refuses to overwrite a tag
+#          that already exists, pushes, and outputs the registry digest (image, tag, digest, ref = image:tag@digest)
+#
+# It never tags the repo, never moves or adds a version or `latest` tag, never deploys: releases stay where they are
+# (the repo's build.yml on a tag push, the release bot, promotion by flux PR). A `sha-` tag matches no Flux image policy
+# filter, and no DevOps image carries a Flux setter marker, so a push here reaches no cluster.
+# Opening the promotion PR in aloma-io/flux is designed but not built (it needs a new credential):
+# claude-code knowledge/proposals/devops/PROPOSAL-IMAGE-CI-TEMPLATE-20261104.md. tests/test_image_ci.py fails if any of
+# this changes.
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: 'Repository name in the registry, e.g. aloma-health-exporter'
+        type: string
+        required: true
+      test-command:
+        description: 'The repo test command, run with bash -e from the repo root, e.g. "npm ci && npm test"'
+        type: string
+        required: true
+      registry:
+        description: 'Registry host'
+        type: string
+        required: false
+        default: 'aloma.azurecr.io'
+      context:
+        description: 'Docker build context'
+        type: string
+        required: false
+        default: '.'
+      dockerfile:
+        description: 'Dockerfile path inside the context'
+        type: string
+        required: false
+        default: 'Dockerfile'
+      prepare-command:
+        description: 'Run in the build job before the image build (e.g. ./build.sh to fetch a pinned binary). Empty: none.'
+        type: string
+        required: false
+        default: ''
+      node-version:
+        description: 'Set up this Node version for the test job. Empty: no Node setup.'
+        type: string
+        required: false
+        default: ''
+      push:
+        description: 'Push the image. Honoured only on a push to main; callers pass the event check too.'
+        type: boolean
+        required: false
+        default: false
+      registry-login:
+        description: 'password (REGISTRY_USERNAME / REGISTRY_PASSWORD) or azure (AZURE_CREDENTIALS, then az acr login)'
+        type: string
+        required: false
+        default: 'password'
+      timeout-minutes:
+        description: 'Timeout of each job'
+        type: number
+        required: false
+        default: 20
+    secrets:
+      REGISTRY_USERNAME:
+        description: 'Registry user (registry-login: password)'
+        required: false
+      REGISTRY_PASSWORD:
+        description: 'Registry password (registry-login: password)'
+        required: false
+      AZURE_CREDENTIALS:
+        description: 'Azure service principal JSON for azure/login (registry-login: azure)'
+        required: false
+    outputs:
+      image:
+        description: 'Image name with registry'
+        value: ${{ jobs.build.outputs.image }}
+      tag:
+        description: 'sha-<full commit>'
+        value: ${{ jobs.build.outputs.tag }}
+      digest:
+        description: 'sha256:<64 hex> of the pushed (or already present) image; empty when nothing was pushed'
+        value: ${{ jobs.build.outputs.digest }}
+      ref:
+        description: 'image:tag@digest, the line a promotion PR writes; empty when nothing was pushed'
+        value: ${{ jobs.build.outputs.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    # PRs: one group per ref, a newer push cancels the older run. Main: one group per commit, so no commit's run is
+    # cancelled or dropped from the queue.
+    concurrency:
+      group: image-ci-test-${{ github.repository }}-${{ inputs.image-name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - if: inputs.node-version != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Test
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -e -c "$TEST_COMMAND"
+
+  build:
+    needs: test
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    concurrency:
+      group: image-ci-build-${{ github.repository }}-${{ inputs.image-name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+      digest: ${{ steps.digest.outputs.digest }}
+      ref: ${{ steps.digest.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare
+        if: inputs.prepare-command != ''
+        env:
+          PREPARE_COMMAND: ${{ inputs.prepare-command }}
+        run: bash -e -c "$PREPARE_COMMAND"
+
+      - name: Image name and tag
+        id: meta
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          SHA: ${{ github.sha }}
+        run: |
+          # the full 40-character commit, prefixed: a bare (short) SHA can be all digits and match a Flux tag filter
+          if [ ${#SHA} -ne 40 ] || [ -n "$(printf '%s' "$SHA" | tr -d '0-9a-f')" ]; then echo "::error::bad commit '$SHA'"; exit 1; fi
+          case "$REGISTRY/$IMAGE_NAME" in *[!a-z0-9./:_-]*) echo "::error::bad image name '$REGISTRY/$IMAGE_NAME'"; exit 1;; esac
+          echo "image=$REGISTRY/$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build once
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build --force-rm --label "org.opencontainers.image.revision=$SHA" \
+            --file "${CONTEXT%/}/$DOCKERFILE" --tag "$IMAGE:$TAG" "$CONTEXT"
+
+      - name: Push only on a push to main that asked for it
+        id: gate
+        env:
+          WANT_PUSH: ${{ inputs.push }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$WANT_PUSH" = "true" ] && [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"; echo "not pushing (push=$WANT_PUSH, event=$EVENT, ref=$REF)"
+          fi
+
+      - name: Log in (user and password)
+        id: login-password
+        if: steps.gate.outputs.push == 'true' && inputs.registry-login == 'password'
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ] || { echo "::error::REGISTRY_USERNAME / REGISTRY_PASSWORD not passed"; exit 1; }
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Log in to Azure (service principal)
+        id: login-azure
+        if: steps.gate.outputs.push == 'true' && inputs.registry-login == 'azure'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to the registry through Azure
+        id: acr-login
+        if: steps.gate.outputs.push == 'true' && inputs.registry-login == 'azure'
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login --name "${REGISTRY%%.*}"
+
+      - name: Does the tag already exist?
+        id: exists
+        if: steps.gate.outputs.push == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # a tag is written once: a re-run of the same commit reports the image already there and pushes nothing
+          if out=$(docker pull "$IMAGE:$TAG" 2>&1); then
+            d=$(printf '%s\n' "$out" | sed -n 's/^Digest: \(sha256:[0-9a-f]*\).*/\1/p' | head -1)
+            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "digest=$d" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$TAG already exists ($d): not pushed again"
+          elif printf '%s\n' "$out" | grep -qiE 'manifest unknown|not found'; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$out"; echo "::error::could not tell whether $IMAGE:$TAG exists"; exit 1
+          fi
+
+      - name: Push
+        id: push
+        if: steps.gate.outputs.push == 'true' && steps.exists.outputs.exists == 'false'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          out=$(docker push "$IMAGE:$TAG" 2>&1) || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          d=$(printf '%s\n' "$out" | sed -n "s/^$TAG: digest: \(sha256:[0-9a-f]*\).*/\1/p" | tail -1)
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
+      - name: Digest
+        id: digest
+        if: steps.gate.outputs.push == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PUSHED: ${{ steps.push.outputs.digest }}
+          EXISTING: ${{ steps.exists.outputs.digest }}
+        run: |
+          d=${PUSHED:-$EXISTING}
+          printf '%s' "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "::error::no valid digest for $IMAGE:$TAG ('$d')"; exit 1; }
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+          echo "ref=$IMAGE:$TAG@$d" >> "$GITHUB_OUTPUT"
+          echo "### $IMAGE:$TAG@$d" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+      - name: Log out
+        id: logout
+        if: always() && steps.gate.outputs.push == 'true'
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: docker logout "$REGISTRY" || true

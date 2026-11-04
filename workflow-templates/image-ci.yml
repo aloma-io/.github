@@ -1,0 +1,25 @@
+name: test
+# Tests this repo, then builds its image ONCE through the shared image CI in aloma-io/.github. On a push to main the
+# image is pushed as <registry>/<image>:sha-<commit> and its digest is in the run summary, ready for a promotion PR to
+# aloma-io/flux. Pull requests test and build but never push. It never tags the repo and deploys nothing: the release
+# stays in build.yml (tag push) and, where it applies, the release bot.
+# Secrets: only the registry ones, passed by name (never all secrets wholesale).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    uses: aloma-io/.github/.github/workflows/image-ci.yml@main
+    with:
+      image-name: REPLACE-WITH-IMAGE-NAME
+      test-command: REPLACE-WITH-TEST-COMMAND
+      push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.AZURE_USER }}
+      REGISTRY_PASSWORD: ${{ secrets.AZURE_PASS }}
