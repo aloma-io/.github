@@ -209,3 +209,23 @@ Ensure these secrets are set at the organization level:
 
 ### Optional Repository Secrets
 - `PAT` - Only needed for repositories with private submodules
+
+## Connector CI Workflow (test only)
+
+`.github/workflows/connector-ci.yml` installs, builds and tests an ALOMA connector:
+`yarn install --frozen-lockfile`, `yarn build`, `yarn test`, once per Node version. The exit code is the result.
+It never tags, publishes, pushes an image or calls the deploy webhook, takes no secrets and runs with a read-only
+token. Releases stay in each connector's `build.yml` (tag push) and the release bot.
+
+Each connector copies `workflow-templates/connector-ci.yml` to `.github/workflows/connector-ci.yml` and deletes its own
+`test.yml` in the same pull request, so nothing runs twice. It runs on push to `main`, on pull requests and on demand.
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `node-versions` | string (JSON list) | `'["22"]'` | Node versions; add `"20"` when package.json `engines` allow it |
+| `timeout-minutes` | number | `15` | Job timeout (the suite must finish in under 10 minutes) |
+| `working-directory` | string | `.` | Folder holding package.json and yarn.lock |
+| `run-mutants` | boolean | `false` | Run `test/mutants/run.mjs` (or `test/recorded/mutants.sh`) after the suite; honoured on `workflow_dispatch` and `schedule` only, never on push or pull request |
+
+Tests: `.github/workflows/test-connector-ci.yml` (actionlint, `tests/test_connector_ci.py`, `tests/connector-ci-local.sh`
+against `tests/fixtures/`, `tests/connector-ci-mutants.sh`, and a real call on the green fixture).

@@ -1,0 +1,7 @@
+{
+  "name": "Connector CI (ALOMA)",
+  "description": "Install, build and test an ALOMA connector on push to main and on pull requests, through the shared test-only workflow. Replaces the repo's own test.yml.",
+  "iconName": "octicon check-circle",
+  "categories": ["JavaScript", "TypeScript"],
+  "filePatterns": ["package.json$", "yarn.lock$"]
+}

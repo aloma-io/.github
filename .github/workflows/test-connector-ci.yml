@@ -1,0 +1,42 @@
+name: Test connector CI
+# Tests the shared connector workflow (.github/workflows/connector-ci.yml) and the caller stub
+# (workflow-templates/connector-ci.yml) from THIS checkout, the PLAT-30/41 way: nothing outside the runner is touched.
+#   checks: actionlint; structural asserts (tests/test_connector_ci.py); the workflow's own run steps against the
+#           fixture connectors in tests/fixtures (green passes, failing test / failing build / stale lockfile fail);
+#           the mutation check (tests/connector-ci-mutants.sh: every break of an asserted property must be caught)
+#   call-green: the real reusable workflow, called locally, on the green fixture with Node 20 and 22
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: actionlint (pinned image)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color .github/workflows/connector-ci.yml workflow-templates/connector-ci.yml .github/workflows/test-connector-ci.yml
+      - name: Tools
+        run: |
+          python3 -c "import yaml; print('PyYAML', yaml.__version__)"
+          node --version; yarn --version
+      - name: Structural tests
+        run: python3 -m unittest -v tests/test_connector_ci.py
+      - name: Behaviour test (fixture connectors)
+        run: bash tests/connector-ci-local.sh
+      - name: Mutation check
+        run: bash tests/connector-ci-mutants.sh
+
+  call-green:
+    uses: ./.github/workflows/connector-ci.yml
+    with:
+      node-versions: '["20", "22"]'
+      working-directory: tests/fixtures/connector-green

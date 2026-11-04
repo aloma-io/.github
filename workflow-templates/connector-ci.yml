@@ -1,0 +1,26 @@
+name: Connector CI
+# Tests this connector on every push to main and every pull request, through the shared test-only workflow in
+# aloma-io/.github. It never tags, publishes or calls the deploy webhook: releases stay in build.yml (tag push) and,
+# for bot-tagged connectors, the release bot. Mutants run on demand only (Actions > Connector CI > Run workflow,
+# tick run-mutants); the nightly runs them on the Mac.
+# Node: 22 always; keep "20" only while package.json engines allow it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run-mutants:
+        description: 'Also run the mutant runner'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: aloma-io/.github/.github/workflows/connector-ci.yml@main
+    with:
+      node-versions: '["20", "22"]'
+      run-mutants: ${{ github.event_name == 'workflow_dispatch' && inputs.run-mutants }}
