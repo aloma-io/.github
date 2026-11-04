@@ -56,7 +56,7 @@ registry_digest() {  # $1 tag -> the digest the registry holds for it, or nothin
 newsha() { python3 -c "import secrets; print(secrets.token_hex(20))"; }
 
 run() {  # $1 fixture  $2 case dir  $3 sha  $4 event  $5 ref  $6 push(true|false)  [$7 build secret  [$8 build-secret-id]]
-  mkdir -p "$2"; cp -R "$HERE/fixtures/$1/." "$2/"
+  mkdir -p "$2"; cp -R "$HERE/fixtures/$1/." "$2/"; newsha > "$2/nonce.txt"   # no build-cache reuse across cases
   local ctx
   ctx=$(python3 -c '
 import json, sys
