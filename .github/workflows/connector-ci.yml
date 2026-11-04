@@ -1,0 +1,107 @@
+name: Connector CI
+# Shared, test-only CI for ALOMA connectors. Each connector calls it from .github/workflows/connector-ci.yml
+# (template: workflow-templates/connector-ci.yml). It installs, builds and tests; the exit code is the result.
+#
+# It never tags, releases, publishes, pushes an image or calls the deploy webhook, takes no secrets and gets a
+# read-only token. Releases stay where they are: the connector's own build.yml (tag push -> image -> webhook) and,
+# for the bot-tagged connectors, the release bot. tests/test_connector_ci.py fails if any of this changes.
+#
+# Contract with Core (what a connector repo provides): claude-code-dev
+# knowledge/reference/CONNECTOR-TEST-JOB-CONTRACT.md. Design: claude-code
+# knowledge/proposals/devops/PROPOSAL-CONNECTOR-CI-TEMPLATE-20261104.md.
+on:
+  workflow_call:
+    inputs:
+      node-versions:
+        description: 'JSON list of Node versions. 22 always; add "20" when package.json engines allow it.'
+        type: string
+        required: false
+        default: '["22"]'
+      timeout-minutes:
+        description: 'Job timeout. The suite must finish in under 10 minutes.'
+        type: number
+        required: false
+        default: 15
+      working-directory:
+        description: 'Folder holding package.json and yarn.lock. Connectors leave it at the repo root.'
+        type: string
+        required: false
+        default: '.'
+      run-mutants:
+        description: 'Run the repo mutant runner after the suite. Honoured on workflow_dispatch and schedule only, never on push or pull_request (Actions cap).'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    # one run per repo, ref, event and Node version; a newer push to the same PR cancels the older run, while every
+    # commit on main keeps its own result
+    concurrency:
+      group: connector-ci-${{ github.repository }}-${{ github.ref }}-${{ github.event_name }}-node${{ matrix.node }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: yarn
+          cache-dependency-path: ${{ inputs.working-directory }}/yarn.lock
+      - name: Install
+        run: yarn install --frozen-lockfile
+      - name: Build
+        run: yarn build
+      - name: Test
+        run: yarn test
+
+  mutants:
+    name: mutants
+    needs: test
+    # never per push or pull request: nightly (schedule) or on demand (workflow_dispatch) only
+    if: inputs.run-mutants && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+          cache-dependency-path: ${{ inputs.working-directory }}/yarn.lock
+      - name: Install
+        run: yarn install --frozen-lockfile
+      - name: Mutants
+        # the runner the repo has: test/mutants/run.mjs (standard), or test/recorded/mutants.sh (connector-xlsx)
+        run: |
+          if [ -f test/mutants/run.mjs ]; then
+            node test/mutants/run.mjs
+          elif [ -f test/recorded/mutants.sh ]; then
+            bash test/recorded/mutants.sh
+          else
+            echo "::error::run-mutants was asked for but the repo has no mutant runner (test/mutants/run.mjs or test/recorded/mutants.sh)"
+            exit 1
+          fi

@@ -1,0 +1,10 @@
+{
+  "name": "fixture-connector-red-build",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fixture connector for the connector-ci workflow tests (aloma-io/.github tests/). No dependencies, no network.",
+  "scripts": {
+    "build": "node -e \"console.error(\\\"tsc: error\\\");process.exit(2)\"",
+    "test": "node -e \"const fs=require(\\\"fs\\\");if(!fs.existsSync(\\\"build/out.txt\\\")){console.error(\\\"not built\\\");process.exit(1)}fs.writeFileSync(\\\"test-ran.marker\\\",\\\"ran\\\");console.log(\\\"1 passing\\\")\""
+  }
+}
