@@ -233,5 +233,15 @@ class CallerStub(unittest.TestCase):
         self.assertEqual(self.doc.get("permissions"), {"contents": "read"})
 
 
+class SelfTestWorkflow(unittest.TestCase):
+    """The test workflow's final job reports a check name no other workflow in this repo uses (it was `checks` in both)."""
+
+    def test_final_job_has_unique_name(self):
+        _, doc = load(os.path.join(ROOT, ".github", "workflows", "test-image-ci.yml"))
+        self.assertIn("image-ci-checks", doc["jobs"])
+        self.assertNotIn("checks", doc["jobs"])
+        self.assertEqual(doc["jobs"]["image-ci-checks"].get("name", "image-ci-checks"), "image-ci-checks")
+
+
 if __name__ == "__main__":
     unittest.main()

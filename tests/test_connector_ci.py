@@ -157,5 +157,15 @@ class CallerStub(unittest.TestCase):
         self.assertIn("node-versions", job["with"])
 
 
+class SelfTestWorkflow(unittest.TestCase):
+    """The test workflow's final job reports a check name no other workflow in this repo uses (it was `checks` in both)."""
+
+    def test_final_job_has_unique_name(self):
+        _, doc = load(os.path.join(ROOT, ".github", "workflows", "test-connector-ci.yml"))
+        self.assertIn("connector-ci-checks", doc["jobs"])
+        self.assertNotIn("checks", doc["jobs"])
+        self.assertEqual(doc["jobs"]["connector-ci-checks"].get("name", "connector-ci-checks"), "connector-ci-checks")
+
+
 if __name__ == "__main__":
     unittest.main()
