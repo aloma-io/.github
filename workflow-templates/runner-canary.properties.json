@@ -1,0 +1,6 @@
+{
+  "name": "Runner canary (ALOMA, opt-in)",
+  "description": "Weekly: run this repo's tests on the newest GitHub-hosted Ubuntu image while the repo is pinned below it. Tests only; read-only; no secrets.",
+  "iconName": "octicon beaker",
+  "categories": ["Continuous integration"]
+}

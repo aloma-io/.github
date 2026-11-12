@@ -59,6 +59,11 @@ on:
         type: string
         required: false
         default: 'password'
+      fail-on-floating-runner:
+        description: 'Fail (instead of warn) when this repo names a floating runner label (-latest) in .github/workflows. Warn-only until every caller is pinned (PLAT-140).'
+        type: boolean
+        required: false
+        default: false
       timeout-minutes:
         description: 'Timeout of each job'
         type: number
@@ -106,6 +111,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Runner label guard
+        # PLAT-140: a floating runner label moved the build machines with no warning on 2 Nov 2026. Looks only at this
+        # repo's own workflow files; reads, never changes, anything.
+        working-directory: ${{ github.workspace }}
+        env:
+          FAIL_ON_FLOATING: ${{ inputs.fail-on-floating-runner }}
+        run: |
+          hits=$(grep -nHE '^[^#]*\b(ubuntu|windows|macos)-latest\b' .github/workflows/*.yml 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            printf '%s\n' "$hits" | while IFS= read -r l; do echo "::warning::floating runner label: $l"; done
+            echo "Name the runner image (for example ubuntu-26.04), never -latest (PLAT-140)."
+            if [ "$FAIL_ON_FLOATING" = "true" ]; then exit 1; fi
+          fi
       - if: inputs.node-version != ''
         uses: actions/setup-node@v4
         with:

@@ -89,7 +89,7 @@ class SharedWorkflow(unittest.TestCase):
             self.assertNotIn("uses", job, "job %s must not call another workflow" % name)
 
     def test_install_build_test_in_order(self):
-        cmds = [r.strip() for r in runs(self.jobs["test"])]
+        cmds = [r.strip() for r in runs(self.jobs["test"]) if not r.lstrip().startswith("hits=$(grep")]  # minus the PLAT-140 runner label guard
         self.assertEqual(cmds, ["yarn install --frozen-lockfile", "yarn build", "yarn test"])
 
     def test_node_matrix_from_input(self):
