@@ -1,0 +1,29 @@
+name: Runner canary
+# OPT-IN weekly canary (PLAT-140, row 2.046). Copy this file into a repo whose workflows are still pinned BELOW the newest
+# GitHub-hosted Ubuntu image, set runs-on to that newest image (the Monday report names it), and replace the test command
+# with the repo's own. It runs the repo's tests once a week on the newest image so the pin can be moved when it goes green.
+# It only tests: read-only token, no secrets, no tag, release, publish, push or deploy. Result: the weekly runner report
+# (infra/scripts/runner_labels.py reads this file's last run); not Slack. Cost: about 1 Actions minute per test minute per week
+# (a 6-minute suite is about $0.20 a month on Linux 2-core); delete the file when the pin has moved.
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-canary-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Tests on the newest image
+        run: echo "replace this line with the repo's test command" && exit 1

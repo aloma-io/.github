@@ -30,6 +30,10 @@ jobs:
           node --version; yarn --version
       - name: Structural tests
         run: python3 -m unittest -v tests/test_connector_ci.py
+      - name: Runner label guard tests and mutants (PLAT-140)
+        run: |
+          python3 -m unittest -v tests/test_runner_label_guard.py
+          bash tests/runner-label-guard-mutants.sh
       - name: Behaviour test (fixture connectors)
         run: bash tests/connector-ci-local.sh
       - name: Mutation check
